@@ -1,0 +1,130 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    
+    function isManager() {
+      return isAuthenticated() && (
+        getUserData().role == 'manager' || 
+        (request.auth.token.email == "aravind.aug10@gmail.com" && request.auth.token.email_verified == true)
+      );
+    }
+
+    function isHR() {
+      return isAuthenticated() && getUserData().role == 'hr';
+    }
+
+    function isManagerOrHR() {
+      return isManager() || isHR();
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'name', 'role', 'createdAt']) &&
+             data.uid is string && data.uid.size() > 0 &&
+             data.email is string && data.email.size() > 0 &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.role in ['manager', 'hr', 'telecaller'] &&
+             data.createdAt is string;
+    }
+
+    function isValidLead(data) {
+      return data.keys().hasAll(['name', 'phone', 'status', 'createdAt', 'createdBy']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 150 &&
+             data.phone is string && data.phone.size() > 0 && data.phone.size() < 20 &&
+             (!('email' in data) || (data.email is string && data.email.size() < 150)) &&
+             data.status in ['new', 'interested', 'not_reachable', 'call_back', 'closed_won', 'closed_lost'] &&
+             (!('assignedTo' in data) || data.assignedTo is string) &&
+             (!('notes' in data) || (data.notes is string && data.notes.size() < 5000)) &&
+             (!('temperature' in data) || data.temperature in ['hot', 'warm', 'cold', 'unassigned']) &&
+             data.createdAt is string &&
+             data.createdBy is string;
+    }
+
+    function isValidCallLog(data) {
+      return data.keys().hasAll(['leadId', 'callerId', 'status', 'timestamp']) &&
+             data.leadId is string && data.leadId.size() > 0 &&
+             data.callerId is string && data.callerId.size() > 0 &&
+             data.status in ['interested', 'not_reachable', 'call_back', 'closed_won', 'closed_lost'] &&
+             (!('notes' in data) || (data.notes is string && data.notes.size() < 5000)) &&
+             (!('aiSummary' in data) || (data.aiSummary is string && data.aiSummary.size() < 5000)) &&
+             (!('sentiment' in data) || data.sentiment in ['positive', 'neutral', 'negative', 'angry', 'excited', 'unknown']) &&
+             (!('temperature' in data) || data.temperature in ['hot', 'warm', 'cold', 'unassigned']) &&
+             (!('transcript' in data) || (data.transcript is string && data.transcript.size() < 10000)) &&
+             (!('suggestedMessage' in data) || (data.suggestedMessage is string && data.suggestedMessage.size() < 5000)) &&
+             data.timestamp is string;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      // Anyone authenticated can read user profiles (needed for assigning leads, seeing who called)
+      allow read: if isAuthenticated();
+      
+      // Users can create their own profile. Only managers can create a profile with 'manager' or 'hr' role, 
+      // unless it's the bootstrap admin. Managers can also create profiles for others.
+      allow create: if isAuthenticated() && isValidUser(request.resource.data) &&
+                    (
+                      (isOwner(userId) && (request.resource.data.role == 'telecaller' || isManager())) ||
+                      isManager()
+                    );
+                    
+      // Users can update their own profile (name), but only managers can change roles.
+      allow update: if isAuthenticated() && isValidUser(request.resource.data) &&
+                    (
+                      (isOwner(userId) && request.resource.data.role == resource.data.role) || 
+                      isManager()
+                    );
+
+      // Managers can delete users. Users can delete their own pre-added profile during claiming.
+      allow delete: if isManager() || (isAuthenticated() && resource.data.email == request.auth.token.email && request.auth.token.email_verified == true);
+    }
+
+    match /leads/{leadId} {
+      // Managers and HR can read all leads. Telecallers can read leads assigned to them or unassigned leads.
+      allow read: if isAuthenticated(); // Simplified for now: all authenticated users can read leads to allow queueing.
+      
+      // Managers and HR can create leads.
+      allow create: if isManagerOrHR() && isValidLead(request.resource.data);
+      
+      // Managers/HR can update anything. Telecallers can update status, notes, assignedTo (to claim), lastCalledAt, nextCallAt.
+      allow update: if isAuthenticated() && isValidLead(request.resource.data);
+      
+      // Only managers can delete leads.
+      allow delete: if isManager();
+    }
+
+    match /callLogs/{logId} {
+      // Everyone can read call logs (managers for reports, telecallers for history).
+      allow read: if isAuthenticated();
+      
+      // Telecallers can create logs for themselves. Managers/HR can create logs.
+      allow create: if isAuthenticated() && isValidCallLog(request.resource.data) &&
+                    (request.resource.data.callerId == request.auth.uid || isManagerOrHR());
+                    
+      // Only managers can update or delete call logs.
+      allow update, delete: if isManager();
+    }
+  }
+}

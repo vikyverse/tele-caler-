@@ -1,0 +1,65 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "A user of the CRM system (Manager, HR, or Telecaller).",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "email": { "type": "string", "format": "email" },
+        "name": { "type": "string" },
+        "role": { "type": "string", "enum": ["manager", "hr", "telecaller"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "name", "role", "createdAt"]
+    },
+    "Lead": {
+      "title": "Lead",
+      "description": "A potential customer to be called.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "status": { "type": "string", "enum": ["new", "interested", "not_reachable", "call_back", "closed_won", "closed_lost"] },
+        "assignedTo": { "type": "string", "description": "UID of the telecaller assigned to this lead. Can be empty if unassigned." },
+        "notes": { "type": "string" },
+        "temperature": { "type": "string", "enum": ["hot", "warm", "cold", "unassigned"] },
+        "lastCalledAt": { "type": "string", "format": "date-time" },
+        "nextCallAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "createdBy": { "type": "string", "description": "UID of the manager/hr who uploaded the lead" }
+      },
+      "required": ["name", "phone", "status", "createdAt", "createdBy"]
+    },
+    "CallLog": {
+      "title": "CallLog",
+      "description": "A record of a call made to a lead.",
+      "type": "object",
+      "properties": {
+        "leadId": { "type": "string" },
+        "callerId": { "type": "string" },
+        "status": { "type": "string", "enum": ["interested", "not_reachable", "call_back", "closed_won", "closed_lost"] },
+        "notes": { "type": "string" },
+        "aiSummary": { "type": "string" },
+        "sentiment": { "type": "string", "enum": ["positive", "neutral", "negative", "angry", "excited", "unknown"] },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["leadId", "callerId", "status", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Stores user profiles and roles."
+    },
+    "/leads/{leadId}": {
+      "schema": { "$ref": "#/entities/Lead" },
+      "description": "Stores leads uploaded by managers/HR."
+    },
+    "/callLogs/{logId}": {
+      "schema": { "$ref": "#/entities/CallLog" },
+      "description": "Stores feedback and logs for every call made."
+    }
+  }
+}
