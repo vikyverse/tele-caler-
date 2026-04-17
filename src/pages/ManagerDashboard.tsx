@@ -1,27 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { collection, getDocs, addDoc, serverTimestamp, query, where } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
 import { handleFirestoreError, OperationType } from '../lib/firestore-errors';
 import Papa from 'papaparse';
-import { Upload, Users, PhoneCall, CheckCircle, Flame, Snowflake, TrendingUp } from 'lucide-react';
+import { Upload, Users, PhoneCall, CheckCircle, Flame, Snowflake, TrendingUp, Activity, Clock, PhoneForwarded } from 'lucide-react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
 export default function ManagerDashboard() {
   const { user } = useAuth();
   const [uploading, setUploading] = useState(false);
   const [stats, setStats] = useState({ totalLeads: 0, totalCalls: 0, closedWon: 0, hotLeads: 0, coldLeads: 0 });
+  const [realtimeStats, setRealtimeStats] = useState({ activeCalls: 0, callsLastHour: 0, avgDurationSec: 0 });
   const [chartData, setChartData] = useState<any[]>([]);
 
   useEffect(() => {
-    fetchStats();
-  }, []);
-
-  const fetchStats = async () => {
-    try {
-      const leadsSnap = await getDocs(collection(db, 'leads'));
-      const callsSnap = await getDocs(collection(db, 'callLogs'));
-      
+    // Real-time listener for Leads
+    const unsubscribeLeads = onSnapshot(collection(db, 'leads'), (snapshot) => {
       let closed = 0;
       let hot = 0;
       let cold = 0;
@@ -34,7 +29,7 @@ export default function ManagerDashboard() {
         'closed_lost': 0
       };
 
-      leadsSnap.forEach(doc => {
+      snapshot.forEach(doc => {
         const data = doc.data();
         if (data.status === 'closed_won') closed++;
         if (data.temperature === 'hot') hot++;
@@ -45,13 +40,13 @@ export default function ManagerDashboard() {
         }
       });
 
-      setStats({
-        totalLeads: leadsSnap.size,
-        totalCalls: callsSnap.size,
+      setStats(prev => ({
+        ...prev,
+        totalLeads: snapshot.size,
         closedWon: closed,
         hotLeads: hot,
         coldLeads: cold
-      });
+      }));
 
       const formattedChartData = [
         { name: 'New', value: statusCounts['new'], color: '#9ca3af' },
@@ -63,11 +58,46 @@ export default function ManagerDashboard() {
       ].filter(item => item.value > 0);
 
       setChartData(formattedChartData);
+    }, (error) => handleFirestoreError(error, OperationType.GET, 'leads'));
 
-    } catch (error) {
-      handleFirestoreError(error, OperationType.GET, 'leads/callLogs');
-    }
-  };
+    // Real-time listener for Call Logs
+    const unsubscribeCalls = onSnapshot(collection(db, 'callLogs'), (snapshot) => {
+      let recentCalls = 0;
+      let totalDuration = 0;
+      const oneHourAgo = Date.now() - (60 * 60 * 1000);
+
+      snapshot.forEach(doc => {
+        const data = doc.data();
+        const callTime = new Date(data.timestamp).getTime();
+        
+        if (callTime >= oneHourAgo) {
+          recentCalls++;
+          if (data.durationSeconds) {
+            totalDuration += data.durationSeconds;
+          }
+        }
+      });
+
+      setStats(prev => ({ ...prev, totalCalls: snapshot.size }));
+      
+      setRealtimeStats(prev => ({
+        ...prev,
+        callsLastHour: recentCalls,
+        avgDurationSec: recentCalls > 0 ? Math.round(totalDuration / recentCalls) : 0
+      }));
+    }, (error) => handleFirestoreError(error, OperationType.GET, 'callLogs'));
+
+    // Real-time listener for Active Calls
+    const unsubscribeActiveCalls = onSnapshot(collection(db, 'activeCalls'), (snapshot) => {
+      setRealtimeStats(prev => ({ ...prev, activeCalls: snapshot.size }));
+    }, (error) => handleFirestoreError(error, OperationType.GET, 'activeCalls'));
+
+    return () => {
+      unsubscribeLeads();
+      unsubscribeCalls();
+      unsubscribeActiveCalls();
+    };
+  }, []);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -86,9 +116,9 @@ export default function ManagerDashboard() {
               await addDoc(collection(db, 'leads'), {
                 name: row.name,
                 phone: row.phone,
-                email: row.email || row.Emailid || row.Email || '', // Handle various email header formats
+                email: row.email || row.Emailid || row.Email || '',
                 status: 'new',
-                assignedTo: '', // Unassigned initially
+                assignedTo: '',
                 notes: '',
                 temperature: 'unassigned',
                 createdAt: new Date().toISOString(),
@@ -98,7 +128,6 @@ export default function ManagerDashboard() {
             }
           }
           alert(`Successfully uploaded ${count} leads!`);
-          fetchStats();
         } catch (error) {
           handleFirestoreError(error, OperationType.CREATE, 'leads');
         } finally {
@@ -109,12 +138,18 @@ export default function ManagerDashboard() {
     });
   };
 
+  const formatDuration = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}m ${secs}s`;
+  };
+
   return (
     <div className="space-y-8">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Dashboard Overview</h1>
-          <p className="text-gray-500 mt-1">Track your team's calling performance and lead pipeline.</p>
+          <p className="text-gray-500 mt-1">Track your team's calling performance and lead pipeline in real time.</p>
         </div>
         
         <div>
@@ -132,7 +167,50 @@ export default function ManagerDashboard() {
         </div>
       </div>
 
-      {/* Stats Cards */}
+      {/* Real-Time Telephony Stats */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="bg-gradient-to-br from-indigo-500 to-indigo-600 p-6 rounded-2xl shadow-md text-white flex items-center justify-between">
+          <div>
+            <p className="text-indigo-100 font-medium mb-1">Active Calls</p>
+            <div className="flex items-baseline gap-2">
+              <span className="text-4xl font-bold">{realtimeStats.activeCalls}</span>
+              {realtimeStats.activeCalls > 0 && (
+                <span className="flex h-3 w-3 relative">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-white"></span>
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="bg-white/20 p-4 rounded-full">
+            <PhoneForwarded className="w-8 h-8 text-white" />
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 flex items-center justify-between">
+          <div>
+            <p className="text-gray-500 font-medium mb-1">Calls (Last Hour)</p>
+            <span className="text-4xl font-bold text-gray-900">{realtimeStats.callsLastHour}</span>
+          </div>
+          <div className="bg-blue-50 p-4 rounded-full border border-blue-100">
+            <Activity className="w-8 h-8 text-blue-600" />
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 flex items-center justify-between">
+          <div>
+            <p className="text-gray-500 font-medium mb-1">Avg Contact Duration</p>
+            <span className="text-3xl font-bold text-gray-900 flex items-baseline">
+              {formatDuration(realtimeStats.avgDurationSec)}
+            </span>
+          </div>
+          <div className="bg-emerald-50 p-4 rounded-full border border-emerald-100">
+            <Clock className="w-8 h-8 text-emerald-600" />
+          </div>
+        </div>
+      </div>
+
+      {/* Secondary Stats Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 flex flex-col justify-center transition-shadow hover:shadow-md">
           <div className="flex items-center gap-3 mb-2">

@@ -71,6 +71,7 @@ service cloud.firestore {
              (!('temperature' in data) || data.temperature in ['hot', 'warm', 'cold', 'unassigned']) &&
              (!('transcript' in data) || (data.transcript is string && data.transcript.size() < 10000)) &&
              (!('suggestedMessage' in data) || (data.suggestedMessage is string && data.suggestedMessage.size() < 5000)) &&
+             (!('durationSeconds' in data) || data.durationSeconds is number) &&
              data.timestamp is string;
     }
 
@@ -99,6 +100,11 @@ service cloud.firestore {
 
       // Managers can delete users. Users can delete their own pre-added profile during claiming.
       allow delete: if isManager() || (isAuthenticated() && resource.data.email == request.auth.token.email && request.auth.token.email_verified == true);
+    }
+
+    match /activeCalls/{callerId} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner(callerId) || isManager();
     }
 
     match /leads/{leadId} {

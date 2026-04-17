@@ -1,6 +1,17 @@
 import { GoogleGenAI } from '@google/genai';
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+let aiClient: GoogleGenAI | null = null;
+
+function getAIClient(): GoogleGenAI {
+  if (!aiClient) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error("GEMINI_API_KEY is missing. Please set it in your environment or Settings menu.");
+    }
+    aiClient = new GoogleGenAI({ apiKey });
+  }
+  return aiClient;
+}
 
 export async function generateCallSummary(notes: string): Promise<{ summary: string; sentiment: string, temperature: string, suggestedMessage: string }> {
   if (!notes || notes.trim() === '') {
@@ -26,6 +37,7 @@ export async function generateCallSummary(notes: string): Promise<{ summary: str
   `;
 
   try {
+    const ai = getAIClient();
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: prompt,
@@ -46,6 +58,9 @@ export async function generateCallSummary(notes: string): Promise<{ summary: str
     }
   } catch (error) {
     console.error("Error generating AI summary:", error);
+    if (error instanceof Error && error.message.includes('GEMINI_API_KEY')) {
+      alert("AI capabilities require a Gemini API key. Check your settings.");
+    }
   }
   
   return { summary: '', sentiment: 'unknown', temperature: 'unassigned', suggestedMessage: '' };
@@ -71,6 +86,7 @@ export async function analyzeAudioFeedback(audioBase64: string, mimeType: string
   `;
 
   try {
+    const ai = getAIClient();
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: [
@@ -100,6 +116,9 @@ export async function analyzeAudioFeedback(audioBase64: string, mimeType: string
     }
   } catch (error) {
     console.error("Error analyzing audio:", error);
+    if (error instanceof Error && error.message.includes('GEMINI_API_KEY')) {
+      alert("AI capabilities require a Gemini API key. Check your settings.");
+    }
   }
   
   return { transcript: '', summary: '', sentiment: 'unknown', temperature: 'unassigned', suggestedMessage: '' };

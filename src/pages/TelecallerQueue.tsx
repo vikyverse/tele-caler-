@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { collection, query, where, getDocs, doc, updateDoc, addDoc, serverTimestamp, limit, orderBy } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, updateDoc, addDoc, setDoc, deleteDoc, serverTimestamp, limit, orderBy } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
 import { handleFirestoreError, OperationType } from '../lib/firestore-errors';
@@ -27,12 +27,13 @@ export default function TelecallerQueue() {
   const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Audio Recording State
+  // Audio Recording & Calling State
   const [isRecording, setIsRecording] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [manualNumber, setManualNumber] = useState('');
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const dialStartTimeRef = useRef<number | null>(null);
   
   // AI Results State
   const [aiAnalysis, setAiAnalysis] = useState<{
@@ -42,6 +43,15 @@ export default function TelecallerQueue() {
     temperature: string;
     suggestedMessage: string;
   } | null>(null);
+
+  // Clean up active call on unmount
+  useEffect(() => {
+    return () => {
+      if (user && dialStartTimeRef.current) {
+        deleteDoc(doc(db, 'activeCalls', user.uid)).catch(console.error);
+      }
+    };
+  }, [user]);
 
   useEffect(() => {
     if (user) {
@@ -54,6 +64,17 @@ export default function TelecallerQueue() {
     setAiAnalysis(null);
     setNotes('');
     setStatus('interested');
+    dialStartTimeRef.current = null;
+    
+    // Clear active call state if lingering
+    if (user) {
+      try {
+        await deleteDoc(doc(db, 'activeCalls', user.uid));
+      } catch (err) {
+        // Ignore if document doesn't exist
+      }
+    }
+
     try {
       const assignedQuery = query(
         collection(db, 'leads'),
@@ -100,6 +121,23 @@ export default function TelecallerQueue() {
     }
   };
 
+  const handleDial = async (leadId: string | null, phone: string) => {
+    if (!user) return;
+    dialStartTimeRef.current = Date.now();
+    
+    try {
+      await setDoc(doc(db, 'activeCalls', user.uid), {
+        callerId: user.uid,
+        callerName: user.name,
+        leadId: leadId || 'manual',
+        phone: phone,
+        startTime: new Date().toISOString()
+      });
+    } catch (err) {
+      console.error("Failed to set active call", err);
+    }
+  };
+
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -141,14 +179,12 @@ export default function TelecallerQueue() {
       reader.readAsDataURL(blob);
       reader.onloadend = async () => {
         const base64data = reader.result as string;
-        // Remove the data URL prefix (e.g., "data:audio/webm;base64,")
         const base64String = base64data.split(',')[1];
         
         const analysis = await analyzeAudioFeedback(base64String, mimeType);
         setAiAnalysis(analysis);
-        setNotes(analysis.transcript); // Auto-fill notes with transcript
+        setNotes(analysis.transcript);
         
-        // Auto-select status based on temperature/sentiment if possible
         if (analysis.temperature === 'hot' || analysis.sentiment === 'excited') {
           setStatus('interested');
         } else if (analysis.temperature === 'cold' && analysis.sentiment === 'negative') {
@@ -168,7 +204,6 @@ export default function TelecallerQueue() {
     setIsSubmitting(true);
 
     try {
-      // 1. Generate AI Summary if notes exist and we haven't done audio analysis
       let aiSummary = aiAnalysis?.summary || '';
       let sentiment = aiAnalysis?.sentiment || 'unknown';
       let temperature = aiAnalysis?.temperature || 'unassigned';
@@ -184,8 +219,12 @@ export default function TelecallerQueue() {
       }
 
       const timestamp = new Date().toISOString();
+      let durationSeconds = 0;
+      if (dialStartTimeRef.current) {
+        durationSeconds = Math.floor((Date.now() - dialStartTimeRef.current) / 1000);
+      }
 
-      // 2. Add Call Log
+      // Add Call Log
       await addDoc(collection(db, 'callLogs'), {
         leadId: currentLead.id,
         callerId: user.uid,
@@ -196,10 +235,11 @@ export default function TelecallerQueue() {
         temperature,
         transcript,
         suggestedMessage,
+        durationSeconds,
         timestamp
       });
 
-      // 3. Update Lead
+      // Update Lead
       await updateDoc(doc(db, 'leads', currentLead.id), {
         status,
         notes,
@@ -255,7 +295,13 @@ export default function TelecallerQueue() {
               ? "bg-green-500 hover:bg-green-600 text-white shadow-lg shadow-green-500/30 transform hover:-translate-y-0.5" 
               : "bg-gray-100 text-gray-400 cursor-not-allowed"
           )}
-          onClick={(e) => !manualNumber && e.preventDefault()}
+          onClick={(e) => {
+            if (!manualNumber) {
+              e.preventDefault();
+            } else {
+              handleDial(null, manualNumber);
+            }
+          }}
         >
           Dial
         </a>
@@ -296,6 +342,7 @@ export default function TelecallerQueue() {
           <div className="flex flex-col sm:flex-row gap-4 max-w-md mx-auto">
             <a 
               href={`tel:${currentLead.phone}`}
+              onClick={() => handleDial(currentLead.id, currentLead.phone)}
               className="flex-1 inline-flex items-center justify-center bg-green-500 hover:bg-green-600 text-white font-bold py-3.5 px-6 rounded-xl shadow-lg shadow-green-500/30 transform transition hover:-translate-y-0.5"
             >
               <Phone className="w-5 h-5 mr-2" />
