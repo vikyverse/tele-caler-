@@ -1,14 +1,50 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../lib/AuthContext';
+import { db } from '../lib/firebase';
+import { collection, query, where, getDocs } from 'firebase/firestore';
 import { logOut } from '../lib/firebase';
-import { LayoutDashboard, Users, Phone, LogOut, Menu, X } from 'lucide-react';
+import { LayoutDashboard, Users, Phone, LogOut, Menu, X, BellRing } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 export default function Layout() {
   const { user } = useAuth();
   const location = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [reminders, setReminders] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!user || user.role === 'hr') return;
+
+    const checkReminders = async () => {
+      try {
+        const q = query(
+          collection(db, 'leads'),
+          where('assignedTo', '==', user.uid)
+        );
+        const snap = await getDocs(q);
+        const now = new Date();
+        
+        const dueLeads = snap.docs
+          .map(doc => ({ id: doc.id, ...doc.data() } as any))
+          .filter(lead => 
+            lead.status === 'call_back' && 
+            lead.nextCallAt && 
+            new Date(lead.nextCallAt) <= now
+          );
+        
+        setReminders(dueLeads);
+      } catch (error) {
+        console.error("Failed to check reminders", error);
+      }
+    };
+
+    // Check immediately and then every minute
+    checkReminders();
+    const interval = setInterval(checkReminders, 60000);
+
+    return () => clearInterval(interval);
+  }, [user]);
 
   if (!user) return null;
 
@@ -21,7 +57,39 @@ export default function Layout() {
   const closeMobileMenu = () => setIsMobileMenuOpen(false);
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col md:flex-row font-sans">
+    <div className="min-h-screen bg-gray-50 flex flex-col md:flex-row font-sans relative">
+      {/* Reminder Toasts */}
+      {reminders.length > 0 && (
+        <div className="fixed top-4 right-4 z-50 flex flex-col gap-3">
+          {reminders.map((lead) => (
+            <div key={lead.id} className="bg-white border-l-4 border-purple-500 shadow-xl rounded-lg p-4 max-w-sm w-full animate-in slide-in-from-right-8 fade-in">
+              <div className="flex items-start">
+                <div className="flex-shrink-0">
+                  <BellRing className="h-6 w-6 text-purple-500" />
+                </div>
+                <div className="ml-3 w-0 flex-1 pt-0.5">
+                  <p className="text-sm font-bold text-gray-900">
+                    Follow-up Call Due
+                  </p>
+                  <p className="mt-1 text-sm text-gray-500">
+                    {lead.name} ({lead.phone})
+                  </p>
+                </div>
+                <div className="ml-4 flex-shrink-0 flex">
+                  <Link 
+                    to="/queue"
+                    onClick={() => setReminders(reminders.filter(r => r.id !== lead.id))} 
+                    className="bg-purple-50 text-purple-700 px-3 py-1.5 rounded-md text-xs font-bold hover:bg-purple-100 transition-colors"
+                  >
+                    Go to Queue
+                  </Link>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Mobile Header */}
       <div className="md:hidden bg-gray-900 text-white h-16 flex items-center justify-between px-4 shadow-md z-20">
         <div className="flex items-center">

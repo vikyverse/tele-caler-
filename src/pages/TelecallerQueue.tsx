@@ -25,6 +25,7 @@ export default function TelecallerQueue() {
   // Feedback form state
   const [status, setStatus] = useState('interested');
   const [notes, setNotes] = useState('');
+  const [reminderDate, setReminderDate] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Audio Recording & Calling State
@@ -64,6 +65,7 @@ export default function TelecallerQueue() {
     setAiAnalysis(null);
     setNotes('');
     setStatus('interested');
+    setReminderDate('');
     dialStartTimeRef.current = null;
     
     // Clear active call state if lingering
@@ -84,7 +86,24 @@ export default function TelecallerQueue() {
       let snap = await getDocs(assignedQuery);
       
       // Filter in memory to avoid composite index requirement
-      let validDocs = snap.docs.filter(doc => ['new', 'call_back'].includes(doc.data().status));
+      const now = new Date();
+      let validDocs = snap.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as Lead & { nextCallAt?: string }))
+        .filter(lead => {
+           if (lead.status === 'new') return true;
+           if (lead.status === 'call_back') {
+              // Only show call_backs if they are due (or if no date was set)
+              if (!lead.nextCallAt) return true;
+              return new Date(lead.nextCallAt) <= now;
+           }
+           return false;
+        })
+        .sort((a, b) => {
+           // Prioritize call_backs over new leads
+           if (a.status === 'call_back' && b.status !== 'call_back') return -1;
+           if (a.status !== 'call_back' && b.status === 'call_back') return 1;
+           return 0;
+        });
       
       if (validDocs.length === 0) {
         // Try to find an unassigned 'new' lead
@@ -94,7 +113,9 @@ export default function TelecallerQueue() {
         );
         snap = await getDocs(unassignedQuery);
         
-        validDocs = snap.docs.filter(doc => doc.data().status === 'new');
+        validDocs = snap.docs
+          .map(doc => ({ id: doc.id, ...doc.data() } as Lead & { nextCallAt?: string }))
+          .filter(lead => lead.status === 'new');
         
         if (validDocs.length > 0) {
           // Claim it
@@ -102,13 +123,13 @@ export default function TelecallerQueue() {
           await updateDoc(doc(db, 'leads', leadDoc.id), {
             assignedTo: user?.uid
           });
-          setCurrentLead({ id: leadDoc.id, ...leadDoc.data() } as Lead);
+          setCurrentLead(leadDoc);
         } else {
           setCurrentLead(null);
         }
       } else {
         const leadDoc = validDocs[0];
-        setCurrentLead({ id: leadDoc.id, ...leadDoc.data() } as Lead);
+        setCurrentLead(leadDoc);
       }
 
       // Get total queue count for this user
@@ -239,13 +260,21 @@ export default function TelecallerQueue() {
         timestamp
       });
 
-      // Update Lead
-      await updateDoc(doc(db, 'leads', currentLead.id), {
+      const leadUpdate: any = {
         status,
         notes,
         temperature,
         lastCalledAt: timestamp,
-      });
+      };
+
+      if (status === 'call_back' && reminderDate) {
+        leadUpdate.nextCallAt = new Date(reminderDate).toISOString();
+      } else {
+        leadUpdate.nextCallAt = null;
+      }
+
+      // Update Lead
+      await updateDoc(doc(db, 'leads', currentLead.id), leadUpdate);
 
       fetchNextLead();
 
@@ -464,6 +493,19 @@ export default function TelecallerQueue() {
               })}
             </div>
           </div>
+
+          {status === 'call_back' && (
+            <div className="animate-in fade-in slide-in-from-top-2 duration-300">
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Follow-up Reminder</label>
+              <input
+                type="datetime-local"
+                className="w-full sm:w-auto px-4 py-3 border border-gray-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors shadow-sm text-gray-700"
+                value={reminderDate}
+                onChange={(e) => setReminderDate(e.target.value)}
+                min={new Date().toISOString().slice(0, 16)}
+              />
+            </div>
+          )}
 
           <div>
             <label className="block text-sm font-semibold text-gray-700 mb-2">

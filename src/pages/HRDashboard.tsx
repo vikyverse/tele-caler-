@@ -62,18 +62,17 @@ export default function HRDashboard() {
     
     setIsAdding(true);
     try {
-      // Generate a temporary UID for the pre-added profile
-      const tempUid = 'pre_' + Date.now().toString() + Math.random().toString(36).substring(2, 9);
+      const normalizedEmail = newUserEmail.toLowerCase().trim();
       
       const newUser: AppUser = {
-        uid: tempUid,
-        email: newUserEmail.toLowerCase(),
+        uid: normalizedEmail,
+        email: normalizedEmail,
         name: newUserName,
         role: newUserRole,
         createdAt: new Date().toISOString(),
       };
       
-      await setDoc(doc(db, 'users', tempUid), newUser);
+      await setDoc(doc(db, 'users', normalizedEmail), newUser);
       
       setUsers([...users, newUser]);
       setShowAddModal(false);

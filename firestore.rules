@@ -85,10 +85,12 @@ service cloud.firestore {
       
       // Users can create their own profile. Only managers can create a profile with 'manager' or 'hr' role, 
       // unless it's the bootstrap admin. Managers can also create profiles for others.
+      // Additionally, users can claim a role pre-assigned to their email document.
       allow create: if isAuthenticated() && isValidUser(request.resource.data) &&
                     (
-                      (isOwner(userId) && (request.resource.data.role == 'telecaller' || isManager())) ||
-                      isManager()
+                      isManager() ||
+                      (isOwner(userId) && request.resource.data.role == 'telecaller') ||
+                      (isOwner(userId) && exists(/databases/$(database)/documents/users/$(request.resource.data.email)) && request.resource.data.role == get(/databases/$(database)/documents/users/$(request.resource.data.email)).data.role)
                     );
                     
       // Users can update their own profile (name), but only managers can change roles.

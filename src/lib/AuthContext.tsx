@@ -46,8 +46,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const preAddedDoc = snap.docs[0];
             const preAddedUser = preAddedDoc.data() as AppUser;
             role = preAddedUser.role;
+
+            const newUser: AppUser = {
+              uid: firebaseUser.uid,
+              email: firebaseUser.email || '',
+              name: firebaseUser.displayName || 'Unknown User',
+              role: role,
+              createdAt: new Date().toISOString(),
+            };
             
-            // Delete the pre-added dummy document
+            await setDoc(userDocRef, newUser);
+            
+            // Delete the pre-added dummy document AFTER creating the new one
             if (preAddedDoc.id !== firebaseUser.uid) {
               try {
                 await deleteDoc(doc(db, 'users', preAddedDoc.id));
@@ -55,18 +65,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 console.error("Failed to delete pre-added profile", e);
               }
             }
+            setUser(newUser);
+          } else {
+            // Create new user profile with the real UID
+            const newUser: AppUser = {
+              uid: firebaseUser.uid,
+              email: firebaseUser.email || '',
+              name: firebaseUser.displayName || 'Unknown User',
+              role: role,
+              createdAt: new Date().toISOString(),
+            };
+            await setDoc(userDocRef, newUser);
+            setUser(newUser);
           }
-
-          // Create new user profile with the real UID
-          const newUser: AppUser = {
-            uid: firebaseUser.uid,
-            email: firebaseUser.email || '',
-            name: firebaseUser.displayName || 'Unknown User',
-            role: role,
-            createdAt: new Date().toISOString(),
-          };
-          await setDoc(userDocRef, newUser);
-          setUser(newUser);
         }
       } else {
         setUser(null);
