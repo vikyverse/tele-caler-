@@ -44,6 +44,11 @@ service cloud.firestore {
              data.email is string && data.email.size() > 0 &&
              data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
              data.role in ['manager', 'hr', 'telecaller'] &&
+             (!('preferences' in data) || (
+               data.preferences is map && 
+               (!('notificationsEnabled' in data.preferences) || data.preferences.notificationsEnabled is bool) &&
+               (!('notificationSound' in data.preferences) || data.preferences.notificationSound is string)
+             )) &&
              data.createdAt is string;
     }
 

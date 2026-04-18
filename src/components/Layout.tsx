@@ -1,20 +1,29 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../lib/AuthContext';
 import { db } from '../lib/firebase';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { logOut } from '../lib/firebase';
-import { LayoutDashboard, Users, Phone, LogOut, Menu, X, BellRing } from 'lucide-react';
+import { LayoutDashboard, Users, Phone, LogOut, Menu, X, BellRing, Settings } from 'lucide-react';
 import { cn } from '../lib/utils';
+import SettingsModal from './SettingsModal';
+import { playNotificationSound } from '../lib/audio';
 
 export default function Layout() {
   const { user } = useAuth();
   const location = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [reminders, setReminders] = useState<any[]>([]);
+  const [showSettings, setShowSettings] = useState(false);
+  const notifiedIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (!user || user.role === 'hr') return;
+
+    if (user.preferences && user.preferences.notificationsEnabled === false) {
+      setReminders([]); // close any existing
+      return;
+    }
 
     const checkReminders = async () => {
       try {
@@ -33,15 +42,37 @@ export default function Layout() {
             new Date(lead.nextCallAt) <= now
           );
         
-        setReminders(dueLeads);
+        let hasNewReminders = false;
+        const currentNotified = notifiedIdsRef.current;
+        
+        const activeReminders = dueLeads.filter(lead => {
+          if (!currentNotified.has(lead.id)) {
+            hasNewReminders = true;
+            currentNotified.add(lead.id);
+          }
+          return true;
+        });
+
+        if (hasNewReminders && user.preferences?.notificationsEnabled !== false) {
+          playNotificationSound(user.preferences?.notificationSound || 'chime');
+        }
+        
+        // Clean out old ones from notified ref if they are no longer due
+        const dueIds = new Set(dueLeads.map(l => l.id));
+        for (let id of currentNotified) {
+          if (!dueIds.has(id)) {
+            currentNotified.delete(id);
+          }
+        }
+
+        setReminders(activeReminders);
       } catch (error) {
         console.error("Failed to check reminders", error);
       }
     };
 
-    // Check immediately and then every minute
     checkReminders();
-    const interval = setInterval(checkReminders, 60000);
+    const interval = setInterval(checkReminders, 30000); // Check every 30s
 
     return () => clearInterval(interval);
   }, [user]);
@@ -154,10 +185,20 @@ export default function Layout() {
             <div className="h-10 w-10 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-bold shadow-inner shrink-0">
               {user.name.charAt(0)}
             </div>
-            <div className="ml-3 overflow-hidden">
+            <div className="ml-3 overflow-hidden flex-1">
               <p className="text-sm font-medium text-white truncate">{user.name}</p>
               <p className="text-xs text-gray-400 capitalize truncate">{user.role}</p>
             </div>
+            <button 
+              onClick={() => {
+                setShowSettings(true);
+                closeMobileMenu();
+              }}
+              className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-colors"
+              title="Notification Settings"
+            >
+              <Settings className="w-5 h-5" />
+            </button>
           </div>
           <button
             onClick={() => {
@@ -178,6 +219,8 @@ export default function Layout() {
           <Outlet />
         </div>
       </div>
+      
+      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
     </div>
   );
 }

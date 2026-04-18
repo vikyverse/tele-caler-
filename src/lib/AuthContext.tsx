@@ -5,24 +5,39 @@ import { auth, db } from './firebase';
 
 export type UserRole = 'manager' | 'hr' | 'telecaller';
 
+export interface UserPreferences {
+  notificationsEnabled: boolean;
+  notificationSound: string;
+}
+
 export interface AppUser {
   uid: string;
   email: string;
   name: string;
   role: UserRole;
+  preferences?: UserPreferences;
   createdAt: string;
 }
 
 interface AuthContextType {
   user: AppUser | null;
   loading: boolean;
+  setUserContext: (user: AppUser | null) => void;
 }
 
-const AuthContext = createContext<AuthContextType>({ user: null, loading: true });
+const AuthContext = createContext<AuthContextType>({ 
+  user: null, 
+  loading: true,
+  setUserContext: () => {} 
+});
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<AppUser | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const setUserContext = (newUser: AppUser | null) => {
+    setUser(newUser);
+  };
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -89,7 +104,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading }}>
+    <AuthContext.Provider value={{ user, loading, setUserContext }}>
       {children}
     </AuthContext.Provider>
   );
